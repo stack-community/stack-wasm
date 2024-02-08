@@ -1,15 +1,37 @@
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
-pub fn run_stack(src: &str) -> String {
+pub fn run_stack(src: &str) -> Result {
     let mut executor = Executor::new();
     executor.evaluate_program(src.to_string());
-    executor.output
+    Result::new(executor.output, executor.log)
 }
 
 #[wasm_bindgen]
 extern {
     pub fn prompt(s: &str) -> String;
+}
+
+
+#[wasm_bindgen]
+pub struct Result {
+    output: String,
+    log: String,
+}
+
+#[wasm_bindgen]
+impl Result {
+    pub fn new(output: String, log: String) -> Self {
+        Result { output, log }
+    }
+
+    pub fn output(&self) -> String {
+        self.output.clone()
+    }
+
+    pub fn log(&self) -> String {
+        self.log.clone()
+    }
 }
 
 use std::collections::HashMap;
@@ -96,6 +118,7 @@ struct Executor {
     stack: Vec<Type>,              // スタック
     memory: HashMap<String, Type>, // 変数のメモリ領域
     output: String,
+    log: String
 }
 
 impl Executor {
@@ -105,17 +128,22 @@ impl Executor {
             stack: Vec::new(),
             memory: HashMap::new(),
             output: String::new(),
+            log: String::new()
         }
     }
 
     /// ログ表示
-    fn log_print(&mut self, msg: String) {
+    fn print(&mut self, msg: String) {
         self.output += format!("{msg}").as_str();
+    }
+
+    fn log(&mut self, msg: String) {
+        self.log += format!("{msg}").as_str();
     }
 
     /// メモリを表示
     fn show_variables(&mut self) {
-        self.log_print(format!(
+        self.log(format!(
             "メモリ内部の変数 {{ {} }}\n",
             self.memory
                 .clone()
@@ -127,7 +155,7 @@ impl Executor {
     }
 
     fn show_stack(&mut self) {
-        self.log_print(format!(
+        self.log(format!(
             "Stack〔 {} 〕",
             self.stack
                 .iter()
@@ -203,7 +231,7 @@ impl Executor {
         for token in syntax {
             // スタック内部を表示する
             self.show_stack();
-            self.log_print(format!(" ←  {}\n", token));
+            self.log(format!(" ←  {}\n", token));
 
             // 数値に変換できたらスタックに積む
             if let Ok(i) = token.parse::<f64>() {
@@ -254,7 +282,7 @@ impl Executor {
 
             // コメントを処理
             if token.contains("#") {
-                self.log_print(format!("※ コメント「{}」\n", token.replace("#", "")));
+                self.log(format!("※ コメント「{}」\n", token.replace("#", "")));
                 continue;
             }
 
@@ -264,7 +292,7 @@ impl Executor {
 
         // 実行後のスタックを表示
         self.show_stack();
-        self.log_print("\n".to_string());
+        self.log("\n".to_string());
     }
 
     /// コマンドを実行する
@@ -370,7 +398,7 @@ impl Executor {
                 match result {
                     Some(c) => self.stack.push(Type::String(c.to_string())),
                     None => {
-                        self.log_print("エラー! 数値デコードに失敗しました\n".to_string());
+                        self.log("エラー! 数値デコードに失敗しました\n".to_string());
                         self.stack.push(Type::Number(code));
                     }
                 }
@@ -381,7 +409,7 @@ impl Executor {
                 if let Some(first_char) = string.chars().next() {
                     self.stack.push(Type::Number((first_char as u32) as f64));
                 } else {
-                    self.log_print("エラー! 文字列のエンコードに失敗しました\n".to_string());
+                    self.log("エラー! 文字列のエンコードに失敗しました\n".to_string());
                     self.stack.push(Type::String(string))
                 }
             }
@@ -436,7 +464,7 @@ impl Executor {
             // 標準出力
             "print" => {
                 let a = self.pop_stack().get_string();
-                self.log_print(format!("[出力]: {a}\n"));
+                self.print(format!("[出力]: {a}\n"));
             }
 
             "input" => {
@@ -494,7 +522,7 @@ impl Executor {
                 if list.len() > index {
                     self.stack.push(list[index].clone());
                 } else {
-                    self.log_print("エラー! インデックス指定が範囲外です\n".to_string());
+                    self.log("エラー! インデックス指定が範囲外です\n".to_string());
                     self.stack.push(Type::List(list));
                 }
             }
@@ -508,7 +536,7 @@ impl Executor {
                     list[index] = value;
                     self.stack.push(Type::List(list));
                 } else {
-                    self.log_print("エラー! インデックス指定が範囲外です\n".to_string());
+                    self.log("エラー! インデックス指定が範囲外です\n".to_string());
                     self.stack.push(Type::List(list));
                 }
             }
@@ -521,7 +549,7 @@ impl Executor {
                     list.remove(index as usize);
                     self.stack.push(Type::List(list));
                 } else {
-                    self.log_print("エラー! インデックス指定が範囲外です\n".to_string());
+                    self.log("エラー! インデックス指定が範囲外です\n".to_string());
                     self.stack.push(Type::List(list));
                 }
             }
@@ -755,7 +783,7 @@ impl Executor {
         if let Some(value) = self.stack.pop() {
             value
         } else {
-            self.log_print(
+            self.log(
                 "エラー! スタックの値が足りません。デフォルト値を返します\n".to_string(),
             );
             Type::String("".to_string())
