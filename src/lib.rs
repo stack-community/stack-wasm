@@ -464,7 +464,7 @@ impl Executor {
             // 標準出力
             "print" => {
                 let a = self.pop_stack().get_string();
-                self.print(format!("[出力]: {a}\n"));
+                self.print(format!("{a}\n"));
             }
 
             "input" => {
