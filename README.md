@@ -1,2 +1,2 @@
 # stack-wasm
-Webアセンブリ版のStackプログラミング言語ディストリビューション
+Web assembly version of Stack programming language distribution
