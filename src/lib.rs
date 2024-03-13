@@ -34,16 +34,9 @@ impl Result {
     }
 }
 
-use rand::seq::SliceRandom;
 use regex::Regex;
-use rodio::{OutputStream, Sink, Source};
 use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File};
-use std::io::{self, Error, Read, Write};
-use std::path::Path;
-use std::thread::{self, sleep};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Data type
 #[derive(Clone, Debug)]
@@ -398,23 +391,6 @@ impl Executor {
                 self.stack.push(Type::Bool(a < b));
             }
 
-            // Get random value from list
-            "rand" => {
-                let list = self.pop_stack().get_list();
-                let result = match list.choose(&mut rand::thread_rng()) {
-                    Some(i) => i.to_owned(),
-                    None => Type::List(list),
-                };
-                self.stack.push(result);
-            }
-
-            // Shuffle list by random
-            "shuffle" => {
-                let mut list = self.pop_stack().get_list();
-                list.shuffle(&mut rand::thread_rng());
-                self.stack.push(Type::List(list));
-            }
-
             // Commands of string processing
 
             // Repeat string a number of times
@@ -516,34 +492,6 @@ impl Executor {
 
             // Commands of I/O
 
-            // Write string in the file
-            "write-file" => {
-                let mut file = match File::create(self.pop_stack().get_string()) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        self.log(format!("Error! {e}\n"));
-                        self.stack.push(Type::Error("create-file".to_string()));
-                        return;
-                    }
-                };
-                if let Err(e) = file.write_all(self.pop_stack().get_string().as_bytes()) {
-                    self.log(format!("Error! {}\n", e));
-                    self.stack.push(Type::Error("write-file".to_string()));
-                }
-            }
-
-            // Read string in the file
-            "read-file" => {
-                let name = self.pop_stack().get_string();
-                match get_file_contents(name) {
-                    Ok(s) => self.stack.push(Type::String(s)),
-                    Err(e) => {
-                        self.log(format!("Error! {}\n", e));
-                        self.stack.push(Type::Error("read-file".to_string()));
-                    }
-                };
-            }
-
             // Standard input
             "input" => {
                 let promp = self.pop_stack().get_string();
@@ -564,39 +512,6 @@ impl Executor {
                     .map(|x| Type::String(x.to_string()))
                     .collect::<Vec<Type>>(),
             )),
-
-            // Play sound from frequency
-            "play-sound" => {
-                fn play_sine_wave(frequency: f64, duration_secs: f64) {
-                    let sample_rate = 44100f64;
-
-                    let num_samples = (duration_secs * sample_rate) as usize;
-                    let samples: Vec<f32> = (0..num_samples)
-                        .map(|t| {
-                            let t = t as f64 / sample_rate;
-                            (t * frequency * 2.0 * std::f64::consts::PI).sin() as f32
-                        })
-                        .collect();
-
-                    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-                    let sink = Sink::try_new(&stream_handle).unwrap();
-
-                    for _ in samples {
-                        sink.append(
-                            rodio::source::SineWave::new(frequency as f32)
-                                .take_duration(Duration::from_secs_f64(duration_secs)),
-                        );
-                    }
-
-                    sink.play();
-                    std::thread::sleep(Duration::from_secs_f64(duration_secs));
-                }
-
-                let duration_secs = self.pop_stack().get_number();
-                let frequency = self.pop_stack().get_number();
-
-                play_sine_wave(frequency, duration_secs);
-            }
 
             // Commands of control
 
@@ -628,19 +543,6 @@ impl Executor {
                 } {
                     self.evaluate_program(code.clone());
                 }
-            }
-
-            // Generate a thread
-            "thread" => {
-                let code = self.pop_stack().get_string();
-                let mut executor = self.clone();
-                thread::spawn(move || executor.evaluate_program(code));
-            }
-
-            // exit a process
-            "exit" => {
-                let status = self.pop_stack().get_number();
-                std::process::exit(status as i32);
             }
 
             // Commands of list processing
@@ -926,125 +828,6 @@ impl Executor {
                 let a = self.pop_stack();
                 self.stack.push(b);
                 self.stack.push(a);
-            }
-
-            // Commands of times
-
-            // Get now time as unix epoch
-            "now-time" => {
-                self.stack.push(Type::Number(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs_f64(),
-                ));
-            }
-
-            // Sleep fixed time
-            "sleep" => sleep(Duration::from_secs_f64(self.pop_stack().get_number())),
-
-            // Command of external cooperation processing
-
-            // Send the http request
-            "request" => {
-                let url = self.pop_stack().get_string();
-                self.stack.push(Type::String(
-                    reqwest::blocking::get(url).unwrap().text().unwrap(),
-                ));
-            }
-
-            // Open the file or url
-            "open" => {
-                let name = self.pop_stack().get_string();
-                if let Err(e) = opener::open(name.clone()) {
-                    self.log(format!("Error! {e}\n"));
-                    self.stack.push(Type::Error("open".to_string()));
-                } else {
-                    self.stack.push(Type::String(name))
-                }
-            }
-
-            // Change current directory
-            "cd" => {
-                let name = self.pop_stack().get_string();
-                if let Err(err) = std::env::set_current_dir(name.clone()) {
-                    self.log(format!("Error! {}\n", err));
-                    self.stack.push(Type::Error("cd".to_string()));
-                } else {
-                    self.stack.push(Type::String(name))
-                }
-            }
-
-            // Get current directory
-            "pwd" => {
-                if let Ok(current_dir) = std::env::current_dir() {
-                    if let Some(path) = current_dir.to_str() {
-                        self.stack.push(Type::String(String::from(path)));
-                    }
-                }
-            }
-
-            // Make directory
-            "mkdir" => {
-                let name = self.pop_stack().get_string();
-                if let Err(e) = fs::create_dir(name.clone()) {
-                    self.log(format!("Error! {e}\n"));
-                    self.stack.push(Type::Error("mkdir".to_string()));
-                } else {
-                    self.stack.push(Type::String(name))
-                }
-            }
-
-            // Remove item
-            "rm" => {
-                let name = self.pop_stack().get_string();
-                if Path::new(name.as_str()).is_dir() {
-                    if let Err(e) = fs::remove_dir(name.clone()) {
-                        self.log(format!("Error! {e}\n"));
-                        self.stack.push(Type::Error("rm".to_string()));
-                    } else {
-                        self.stack.push(Type::String(name))
-                    }
-                } else if let Err(e) = fs::remove_file(name.clone()) {
-                    self.log(format!("Error! {e}\n"));
-                    self.stack.push(Type::Error("rm".to_string()));
-                } else {
-                    self.stack.push(Type::String(name))
-                }
-            }
-
-            // Rename item
-            "rename" => {
-                let to = self.pop_stack().get_string();
-                let from = self.pop_stack().get_string();
-                if let Err(e) = fs::rename(from, to.clone()) {
-                    self.log(format!("Error! {e}\n"));
-                    self.stack.push(Type::Error("rename".to_string()));
-                } else {
-                    self.stack.push(Type::String(to))
-                }
-            }
-
-            // Get list of files
-            "ls" => {
-                if let Ok(entries) = fs::read_dir(".") {
-                    let value: Vec<Type> = entries
-                        .filter_map(|entry| {
-                            entry
-                                .ok()
-                                .and_then(|e| e.file_name().into_string().ok())
-                                .map(Type::String)
-                        })
-                        .collect();
-                    self.stack.push(Type::List(value));
-                }
-            }
-
-            // Judge is it folder
-            "folder" => {
-                let path = self.pop_stack().get_string();
-                let path = Path::new(path.as_str());
-                self.stack.push(Type::Bool(path.is_dir()));
             }
 
             // If it is not recognized as a command, use it as a string.
