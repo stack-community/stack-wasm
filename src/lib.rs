@@ -8,9 +8,10 @@ pub fn run_stack(src: &str) -> Result {
 }
 
 #[wasm_bindgen]
-extern "C" {
+extern {
     pub fn prompt(s: &str) -> String;
 }
+
 
 #[wasm_bindgen]
 pub struct Result {
@@ -33,8 +34,16 @@ impl Result {
     }
 }
 
+use rand::seq::SliceRandom;
 use regex::Regex;
+use rodio::{OutputStream, Sink, Source};
 use std::collections::HashMap;
+use std::env;
+use std::fs::{self, File};
+use std::io::{self, Error, Read, Write};
+use std::path::Path;
+use std::thread::{self, sleep};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Data type
 #[derive(Clone, Debug)]
@@ -43,6 +52,7 @@ enum Type {
     String(String),
     Bool(bool),
     List(Vec<Type>),
+    Error(String),
 }
 
 /// Implement methods
@@ -57,6 +67,7 @@ impl Type {
                 let syntax: Vec<String> = list.iter().map(|token| token.display()).collect();
                 format!("[{}]", syntax.join(" "))
             }
+            Type::Error(err) => format!("error:{err}"),
         }
     }
 
@@ -67,6 +78,7 @@ impl Type {
             Type::Number(i) => i.to_string(),
             Type::Bool(b) => b.to_string(),
             Type::List(l) => Type::List(l.to_owned()).display(),
+            Type::Error(err) => format!("error:{err}"),
         }
     }
 
@@ -83,6 +95,7 @@ impl Type {
                 }
             }
             Type::List(l) => l.len() as f64,
+            Type::Error(e) => e.parse().unwrap_or(0f64),
         }
     }
 
@@ -93,6 +106,7 @@ impl Type {
             Type::Number(i) => *i != 0.0,
             Type::Bool(b) => *b,
             Type::List(l) => !l.is_empty(),
+            Type::Error(e) => e.parse().unwrap_or(false),
         }
     }
 
@@ -107,6 +121,7 @@ impl Type {
             Type::Number(i) => vec![Type::Number(*i)],
             Type::Bool(b) => vec![Type::Bool(*b)],
             Type::List(l) => l.to_vec(),
+            Type::Error(e) => vec![Type::Error(e.to_string())],
         }
     }
 }
@@ -117,7 +132,7 @@ struct Executor {
     stack: Vec<Type>,              // Data stack
     memory: HashMap<String, Type>, // Variable's memory
     output: String,
-    log: String,
+    log: String
 }
 
 impl Executor {
@@ -131,11 +146,12 @@ impl Executor {
         }
     }
 
-    /// Output log
+    // Log
     fn log(&mut self, msg: String) {
         self.log += &format!("{msg}\n")
     }
 
+    // Print to standard output
     fn print(&mut self, msg: String) {
         self.output += &format!("{msg}\n")
     }
@@ -236,17 +252,17 @@ impl Executor {
 
             // Judge what the token is
             if let Ok(i) = token.parse::<f64>() {
-                // Push number on stack
+                // Push number value on the stack
                 self.stack.push(Type::Number(i));
             } else if token == "true" || token == "false" {
-                // Push bool on stack
+                // Push bool value on the stack
                 self.stack.push(Type::Bool(token.parse().unwrap_or(true)));
             } else if chars[0] == '(' && chars[chars.len() - 1] == ')' {
-                // Push string on stack
+                // Push string value on the stack
                 self.stack
                     .push(Type::String(token[1..token.len() - 1].to_string()));
             } else if chars[0] == '[' && chars[chars.len() - 1] == ']' {
-                // Push list on stack
+                // Push list value on the stack
                 let old_len = self.stack.len(); // length of old stack
                 let slice = &token[1..token.len() - 1];
                 self.evaluate_program(slice.to_string());
@@ -257,10 +273,13 @@ impl Executor {
                 }
                 list.reverse(); // reverse list
                 self.stack.push(Type::List(list));
+            } else if token.starts_with("error:") {
+                // Push error value on the stack
+                self.stack.push(Type::Error(token.replace("error:", "")))
             } else if let Some(i) = self.memory.get(&token) {
                 // Push variable's data on stack
                 self.stack.push(i.clone());
-            } else if token.contains('#') {
+            } else if chars[0] == '#' && chars[chars.len() - 1] == '#' {
                 // Processing comments
                 self.log(format!("* Comment \"{}\"\n", token.replace('#', "")));
             } else {
@@ -379,6 +398,23 @@ impl Executor {
                 self.stack.push(Type::Bool(a < b));
             }
 
+            // Get random value from list
+            "rand" => {
+                let list = self.pop_stack().get_list();
+                let result = match list.choose(&mut rand::thread_rng()) {
+                    Some(i) => i.to_owned(),
+                    None => Type::List(list),
+                };
+                self.stack.push(result);
+            }
+
+            // Shuffle list by random
+            "shuffle" => {
+                let mut list = self.pop_stack().get_list();
+                list.shuffle(&mut rand::thread_rng());
+                self.stack.push(Type::List(list));
+            }
+
             // Commands of string processing
 
             // Repeat string a number of times
@@ -396,7 +432,7 @@ impl Executor {
                     Some(c) => self.stack.push(Type::String(c.to_string())),
                     None => {
                         self.log("Error! failed of number decoding\n".to_string());
-                        self.stack.push(Type::Number(code));
+                        self.stack.push(Type::Error("number-decoding".to_string()));
                     }
                 }
             }
@@ -408,11 +444,11 @@ impl Executor {
                     self.stack.push(Type::Number((first_char as u32) as f64));
                 } else {
                     self.log("Error! failed of string encoding\n".to_string());
-                    self.stack.push(Type::String(string))
+                    self.stack.push(Type::Error("string-encoding".to_string()));
                 }
             }
 
-            // Concat the string
+            // Concatenate the string
             "concat" => {
                 let b = self.pop_stack().get_string();
                 let a = self.pop_stack().get_string();
@@ -460,15 +496,16 @@ impl Executor {
             // Search by regular expression
             "regex" => {
                 let pattern = self.pop_stack().get_string();
+                let text = self.pop_stack().get_string();
+
                 let pattern: Regex = match Regex::new(pattern.as_str()) {
                     Ok(i) => i,
                     Err(e) => {
-                        self.log(format!("Error! {e}\n"));
+                        self.log(format!("Error! {}\n", e.to_string().replace("Error", "")));
+                        self.stack.push(Type::Error("regex".to_string()));
                         return;
                     }
                 };
-
-                let text = self.pop_stack().get_string();
 
                 let mut list: Vec<Type> = Vec::new();
                 for i in pattern.captures_iter(text.as_str()) {
@@ -479,6 +516,34 @@ impl Executor {
 
             // Commands of I/O
 
+            // Write string in the file
+            "write-file" => {
+                let mut file = match File::create(self.pop_stack().get_string()) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        self.log(format!("Error! {e}\n"));
+                        self.stack.push(Type::Error("create-file".to_string()));
+                        return;
+                    }
+                };
+                if let Err(e) = file.write_all(self.pop_stack().get_string().as_bytes()) {
+                    self.log(format!("Error! {}\n", e));
+                    self.stack.push(Type::Error("write-file".to_string()));
+                }
+            }
+
+            // Read string in the file
+            "read-file" => {
+                let name = self.pop_stack().get_string();
+                match get_file_contents(name) {
+                    Ok(s) => self.stack.push(Type::String(s)),
+                    Err(e) => {
+                        self.log(format!("Error! {}\n", e));
+                        self.stack.push(Type::Error("read-file".to_string()));
+                    }
+                };
+            }
+
             // Standard input
             "input" => {
                 let promp = self.pop_stack().get_string();
@@ -488,7 +553,49 @@ impl Executor {
             // Standard output
             "print" => {
                 let a = self.pop_stack().get_string();
-                self.print(a);
+                self.print(format!("{a}"));
+            }
+
+            // Get command-line arguments
+            "args-cmd" => self.stack.push(Type::List(
+                env::args()
+                    .collect::<Vec<_>>()
+                    .iter()
+                    .map(|x| Type::String(x.to_string()))
+                    .collect::<Vec<Type>>(),
+            )),
+
+            // Play sound from frequency
+            "play-sound" => {
+                fn play_sine_wave(frequency: f64, duration_secs: f64) {
+                    let sample_rate = 44100f64;
+
+                    let num_samples = (duration_secs * sample_rate) as usize;
+                    let samples: Vec<f32> = (0..num_samples)
+                        .map(|t| {
+                            let t = t as f64 / sample_rate;
+                            (t * frequency * 2.0 * std::f64::consts::PI).sin() as f32
+                        })
+                        .collect();
+
+                    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+                    let sink = Sink::try_new(&stream_handle).unwrap();
+
+                    for _ in samples {
+                        sink.append(
+                            rodio::source::SineWave::new(frequency as f32)
+                                .take_duration(Duration::from_secs_f64(duration_secs)),
+                        );
+                    }
+
+                    sink.play();
+                    std::thread::sleep(Duration::from_secs_f64(duration_secs));
+                }
+
+                let duration_secs = self.pop_stack().get_number();
+                let frequency = self.pop_stack().get_number();
+
+                play_sine_wave(frequency, duration_secs);
             }
 
             // Commands of control
@@ -523,13 +630,20 @@ impl Executor {
                 }
             }
 
+            // Generate a thread
+            "thread" => {
+                let code = self.pop_stack().get_string();
+                let mut executor = self.clone();
+                thread::spawn(move || executor.evaluate_program(code));
+            }
+
             // exit a process
             "exit" => {
                 let status = self.pop_stack().get_number();
                 std::process::exit(status as i32);
             }
 
-            // Commands of string processing
+            // Commands of list processing
 
             // Get list value by index
             "get" => {
@@ -539,7 +653,7 @@ impl Executor {
                     self.stack.push(list[index].clone());
                 } else {
                     self.log("Error! Index specification is out of range\n".to_string());
-                    self.stack.push(Type::List(list));
+                    self.stack.push(Type::Error("index-out-range".to_string()));
                 }
             }
 
@@ -553,7 +667,7 @@ impl Executor {
                     self.stack.push(Type::List(list));
                 } else {
                     self.log("Error! Index specification is out of range\n".to_string());
-                    self.stack.push(Type::List(list));
+                    self.stack.push(Type::Error("index-out-range".to_string()));
                 }
             }
 
@@ -566,7 +680,7 @@ impl Executor {
                     self.stack.push(Type::List(list));
                 } else {
                     self.log("Error! Index specification is out of range\n".to_string());
-                    self.stack.push(Type::List(list));
+                    self.stack.push(Type::Error("index-out-range".to_string()));
                 }
             }
 
@@ -625,7 +739,7 @@ impl Executor {
                 });
             }
 
-            // Mapping
+            // Mapping a list
             "map" => {
                 let code = self.pop_stack().get_string();
                 let vars = self.pop_stack().get_string();
@@ -645,7 +759,7 @@ impl Executor {
                 self.stack.push(Type::List(result_list));
             }
 
-            // Filtering
+            // Filtering a list value
             "filter" => {
                 let code = self.pop_stack().get_string();
                 let vars = self.pop_stack().get_string();
@@ -666,6 +780,43 @@ impl Executor {
                 }
 
                 self.stack.push(Type::List(result_list));
+            }
+
+            // Generate value from list
+            "reduce" => {
+                let code = self.pop_stack().get_string();
+                let now = self.pop_stack().get_string();
+                let acc = self.pop_stack().get_string();
+                let list = self.pop_stack().get_list();
+
+                self.memory
+                    .entry(acc.clone())
+                    .and_modify(|value| *value = Type::String("".to_string()))
+                    .or_insert(Type::String("".to_string()));
+
+                for x in list.iter() {
+                    self.memory
+                        .entry(now.clone())
+                        .and_modify(|value| *value = x.clone())
+                        .or_insert(x.clone());
+
+                    self.evaluate_program(code.clone());
+                    let result = self.pop_stack();
+
+                    self.memory
+                        .entry(acc.clone())
+                        .and_modify(|value| *value = result.clone())
+                        .or_insert(result);
+                }
+
+                let result = self.memory.get(&acc);
+                self.stack
+                    .push(result.unwrap_or(&Type::String("".to_string())).clone());
+
+                self.memory
+                    .entry(acc.clone())
+                    .and_modify(|value| *value = Type::String("".to_string()))
+                    .or_insert(Type::String("".to_string()));
             }
 
             // Generate a range
@@ -702,7 +853,7 @@ impl Executor {
                 self.stack.push(Type::Number(len));
             }
 
-            // Define variable
+            // Define variable at memory
             "var" => {
                 let name = self.pop_stack().get_string();
                 let data = self.pop_stack();
@@ -713,13 +864,14 @@ impl Executor {
                 self.show_variables()
             }
 
-            // Get data type
+            // Get data type of value
             "type" => {
                 let result = match self.pop_stack() {
                     Type::Number(_) => "number",
                     Type::String(_) => "string",
                     Type::Bool(_) => "bool",
                     Type::List(_) => "list",
+                    Type::Error(_) => "error",
                 }
                 .to_string();
                 self.stack.push(Type::String(result));
@@ -734,9 +886,16 @@ impl Executor {
                     "string" => self.stack.push(Type::String(value.get_string())),
                     "bool" => self.stack.push(Type::Bool(value.get_bool())),
                     "list" => self.stack.push(Type::List(value.get_list())),
+                    "error" => self.stack.push(Type::Error(value.get_string())),
                     _ => self.stack.push(value),
                 }
             }
+
+            // Is string include only number
+            "only-number" => match self.pop_stack().get_string().trim().parse::<f64>() {
+                Ok(_) => self.stack.push(Type::Bool(true)),
+                Err(_) => self.stack.push(Type::Bool(false)),
+            },
 
             // Get memory information
             "mem" => {
@@ -747,26 +906,145 @@ impl Executor {
                 self.stack.push(Type::List(list))
             }
 
-            // Free memory
+            // Free up memory space of variable
             "free" => {
                 let name = self.pop_stack().get_string();
                 self.memory.remove(name.as_str());
                 self.show_variables();
             }
 
-            // Copy value
+            // Copy stack's top value
             "copy" => {
                 let data = self.pop_stack();
                 self.stack.push(data.clone());
                 self.stack.push(data);
             }
 
-            // Swap value
+            // Swap stack's top 2 value
             "swap" => {
                 let b = self.pop_stack();
                 let a = self.pop_stack();
                 self.stack.push(b);
                 self.stack.push(a);
+            }
+
+            // Commands of times
+
+            // Get now time as unix epoch
+            "now-time" => {
+                self.stack.push(Type::Number(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs_f64(),
+                ));
+            }
+
+            // Sleep fixed time
+            "sleep" => sleep(Duration::from_secs_f64(self.pop_stack().get_number())),
+
+            // Command of external cooperation processing
+
+            // Send the http request
+            "request" => {
+                let url = self.pop_stack().get_string();
+                self.stack.push(Type::String(
+                    reqwest::blocking::get(url).unwrap().text().unwrap(),
+                ));
+            }
+
+            // Open the file or url
+            "open" => {
+                let name = self.pop_stack().get_string();
+                if let Err(e) = opener::open(name.clone()) {
+                    self.log(format!("Error! {e}\n"));
+                    self.stack.push(Type::Error("open".to_string()));
+                } else {
+                    self.stack.push(Type::String(name))
+                }
+            }
+
+            // Change current directory
+            "cd" => {
+                let name = self.pop_stack().get_string();
+                if let Err(err) = std::env::set_current_dir(name.clone()) {
+                    self.log(format!("Error! {}\n", err));
+                    self.stack.push(Type::Error("cd".to_string()));
+                } else {
+                    self.stack.push(Type::String(name))
+                }
+            }
+
+            // Get current directory
+            "pwd" => {
+                if let Ok(current_dir) = std::env::current_dir() {
+                    if let Some(path) = current_dir.to_str() {
+                        self.stack.push(Type::String(String::from(path)));
+                    }
+                }
+            }
+
+            // Make directory
+            "mkdir" => {
+                let name = self.pop_stack().get_string();
+                if let Err(e) = fs::create_dir(name.clone()) {
+                    self.log(format!("Error! {e}\n"));
+                    self.stack.push(Type::Error("mkdir".to_string()));
+                } else {
+                    self.stack.push(Type::String(name))
+                }
+            }
+
+            // Remove item
+            "rm" => {
+                let name = self.pop_stack().get_string();
+                if Path::new(name.as_str()).is_dir() {
+                    if let Err(e) = fs::remove_dir(name.clone()) {
+                        self.log(format!("Error! {e}\n"));
+                        self.stack.push(Type::Error("rm".to_string()));
+                    } else {
+                        self.stack.push(Type::String(name))
+                    }
+                } else if let Err(e) = fs::remove_file(name.clone()) {
+                    self.log(format!("Error! {e}\n"));
+                    self.stack.push(Type::Error("rm".to_string()));
+                } else {
+                    self.stack.push(Type::String(name))
+                }
+            }
+
+            // Rename item
+            "rename" => {
+                let to = self.pop_stack().get_string();
+                let from = self.pop_stack().get_string();
+                if let Err(e) = fs::rename(from, to.clone()) {
+                    self.log(format!("Error! {e}\n"));
+                    self.stack.push(Type::Error("rename".to_string()));
+                } else {
+                    self.stack.push(Type::String(to))
+                }
+            }
+
+            // Get list of files
+            "ls" => {
+                if let Ok(entries) = fs::read_dir(".") {
+                    let value: Vec<Type> = entries
+                        .filter_map(|entry| {
+                            entry
+                                .ok()
+                                .and_then(|e| e.file_name().into_string().ok())
+                                .map(Type::String)
+                        })
+                        .collect();
+                    self.stack.push(Type::List(value));
+                }
+            }
+
+            // Judge is it folder
+            "folder" => {
+                let path = self.pop_stack().get_string();
+                let path = Path::new(path.as_str());
+                self.stack.push(Type::Bool(path.is_dir()));
             }
 
             // If it is not recognized as a command, use it as a string.
