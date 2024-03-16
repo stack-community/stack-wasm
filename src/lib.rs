@@ -34,7 +34,6 @@ impl Result {
     }
 }
 
-use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 
@@ -467,27 +466,6 @@ impl Executor {
                 let word = self.pop_stack().get_string();
                 let text = self.pop_stack().get_string();
                 self.stack.push(Type::Bool(text.contains(&word)))
-            }
-
-            // Search by regular expression
-            "regex" => {
-                let pattern = self.pop_stack().get_string();
-                let text = self.pop_stack().get_string();
-
-                let pattern: Regex = match Regex::new(pattern.as_str()) {
-                    Ok(i) => i,
-                    Err(e) => {
-                        self.log(format!("Error! {}\n", e.to_string().replace("Error", "")));
-                        self.stack.push(Type::Error("regex".to_string()));
-                        return;
-                    }
-                };
-
-                let mut list: Vec<Type> = Vec::new();
-                for i in pattern.captures_iter(text.as_str()) {
-                    list.push(Type::String(i[0].to_string()))
-                }
-                self.stack.push(Type::List(list));
             }
 
             // Commands of I/O
