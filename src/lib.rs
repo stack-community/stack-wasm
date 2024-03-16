@@ -140,7 +140,7 @@ impl Executor {
 
     // Log
     fn log(&mut self, msg: String) {
-        self.log += &format!("{msg}\n")
+        self.log += &format!("{msg}")
     }
 
     // Print to standard output
