@@ -125,6 +125,13 @@ impl Type {
             Type::Object(_, object) => object.values().map(|x| x.to_owned()).collect::<Vec<Type>>(),
         }
     }
+
+    fn get_object(&self) -> (String, HashMap<String, Type>) {
+        match self {
+            Type::Object(name, value) => (name.to_owned(), value.to_owned()),
+            _ => ("".to_string(), HashMap::new()),
+        }
+    }
 }
 
 /// Manage program execution
@@ -716,9 +723,11 @@ impl Executor {
                 let min = self.pop_stack().get_number();
 
                 let mut range: Vec<Type> = Vec::new();
+                let mut i = min;
 
-                for i in (min as usize..max as usize).step_by(step as usize) {
-                    range.push(Type::Number(i as f64));
+                while i < max {
+                    range.push(Type::Number(i));
+                    i += step;
                 }
 
                 self.stack.push(Type::List(range));
@@ -821,111 +830,103 @@ impl Executor {
 
             // Commands of object oriented system
 
-            // Generate a instance of object
-            "instance" => {
-                let data = self.pop_stack().get_list();
-                let mut class = self.pop_stack().get_list();
-                let mut object: HashMap<String, Type> = HashMap::new();
+        // Generate a instance of object
+        "instance" => {
+            let data = self.pop_stack().get_list();
+            let mut class = self.pop_stack().get_list();
+            let mut object: HashMap<String, Type> = HashMap::new();
 
-                let name = if !class.is_empty() {
-                    class[0].get_string()
+            let name = if !class.is_empty() {
+                class[0].get_string()
+            } else {
+                self.log("Error! the type name is not found.".to_string());
+                self.stack.push(Type::Error("instance-name".to_string()));
+                return;
+            };
+
+            let mut index = 0;
+            for item in &mut class.to_owned()[1..class.len()].iter() {
+                let mut item = item.to_owned();
+                if item.get_list().len() == 1 {
+                    let element = match data.get(index) {
+                        Some(value) => value,
+                        None => {
+                            self.log("Error! initial data is shortage\n".to_string());
+                            self.stack
+                                .push(Type::Error("instance-shortage".to_string()));
+                            return;
+                        }
+                    };
+                    object.insert(
+                        item.get_list()[0].to_owned().get_string(),
+                        element.to_owned(),
+                    );
+                    index += 1;
+                } else if item.get_list().len() >= 2 {
+                    let item = item.get_list();
+                    object.insert(item[0].clone().get_string(), item[1].clone());
                 } else {
-                    self.log("Error! the type name is not found.".to_string());
-                    self.stack.push(Type::Error("instance-name".to_string()));
-                    return;
-                };
-
-                let mut index = 0;
-                for item in &mut class.to_owned()[1..class.len()].iter() {
-                    let mut item = item.to_owned();
-                    if item.get_list().len() == 1 {
-                        let element = match data.get(index) {
-                            Some(value) => value,
-                            None => {
-                                self.log(format!("Error! initial data is shortage\n"));
-                                self.stack
-                                    .push(Type::Error("instance-shortage".to_string()));
-                                return;
-                            }
-                        };
-                        object.insert(
-                            item.get_list()[0].to_owned().get_string(),
-                            element.to_owned(),
-                        );
-                        index += 1;
-                    } else if item.get_list().len() >= 2 {
-                        let item = item.get_list();
-                        object.insert(item[0].clone().get_string(), item[1].clone());
-                    } else {
-                        self.log("Error! the class data structure is wrong.".to_string());
-                        self.stack.push(Type::Error("instance-default".to_string()));
-                    }
-                }
-
-                self.stack.push(Type::Object(name, object))
-            }
-
-            // Get property of object
-            "property" => {
-                let name = self.pop_stack().get_string();
-                match self.pop_stack() {
-                    Type::Object(_, data) => self.stack.push(
-                        data.get(name.as_str())
-                            .unwrap_or(&Type::Error("property".to_string()))
-                            .clone(),
-                    ),
-                    _ => self.stack.push(Type::Error("not-object".to_string())),
+                    self.log("Error! the class data structure is wrong.".to_string());
+                    self.stack.push(Type::Error("instance-default".to_string()));
                 }
             }
 
-            // Call the method of object
-            "method" => {
-                let method = self.pop_stack().get_string();
-                match self.pop_stack() {
-                    Type::Object(name, value) => {
-                        let data = Type::Object(name, value.clone());
-                        self.memory
-                            .entry("self".to_string())
-                            .and_modify(|value| *value = data.clone())
-                            .or_insert(data);
+            self.stack.push(Type::Object(name, object))
+        }
 
-                        let program: String = match value.get(&method) {
-                            Some(i) => i.to_owned().get_string().to_string(),
-                            None => "".to_string(),
-                        };
+        // Get property of object
+        "property" => {
+            let name = self.pop_stack().get_string();
+            let (_, object) = self.pop_stack().get_object();
+            self.stack.push(
+                object
+                    .get(name.as_str())
+                    .unwrap_or(&Type::Error("property".to_string()))
+                    .clone(),
+            )
+        }
 
-                        self.evaluate_program(program)
-                    }
-                    _ => self.stack.push(Type::Error("not-object".to_string())),
-                }
-            }
+        // Call the method of object
+        "method" => {
+            let method = self.pop_stack().get_string();
+            let (name, value) = self.pop_stack().get_object();
+            let data = Type::Object(name, value.clone());
+            self.memory
+                .entry("self".to_string())
+                .and_modify(|value| *value = data.clone())
+                .or_insert(data);
 
-            // Modify the property of object
-            "modify" => {
-                let data = self.pop_stack();
-                let property = self.pop_stack().get_string();
-                match self.pop_stack() {
-                    Type::Object(name, mut value) => {
-                        value
-                            .entry(property)
-                            .and_modify(|value| *value = data.clone())
-                            .or_insert(data.clone());
+            let program: String = match value.get(&method) {
+                Some(i) => i.to_owned().get_string().to_string(),
+                None => "".to_string(),
+            };
 
-                        self.stack.push(Type::Object(name, value))
-                    }
-                    _ => self.stack.push(Type::Error("not-object".to_string())),
-                }
-            }
+            self.evaluate_program(program);
+        }
 
-            // Get all of properties
-            "all" => match self.pop_stack() {
-                Type::Object(_, data) => self.stack.push(Type::List(
-                    data.keys()
-                        .map(|x| Type::String(x.to_owned()))
-                        .collect::<Vec<Type>>(),
-                )),
-                _ => self.stack.push(Type::Error("not-object".to_string())),
-            },
+        // Modify the property of object
+        "modify" => {
+            let data = self.pop_stack();
+            let property = self.pop_stack().get_string();
+            let (name, mut value) = self.pop_stack().get_object();
+            value
+                .entry(property)
+                .and_modify(|value| *value = data.clone())
+                .or_insert(data.clone());
+
+            self.stack.push(Type::Object(name, value))
+        }
+
+        // Get all of properties
+        "all" => {
+            let (_, value) = self.pop_stack().get_object();
+            self.stack.push(Type::List(
+                value
+                    .keys()
+                    .map(|x| Type::String(x.to_owned()))
+                    .collect::<Vec<Type>>(),
+            ));
+        }
 
             // If it is not recognized as a command, use it as a string.
             _ => self.stack.push(Type::String(command)),
