@@ -1,10 +1,22 @@
 use wasm_bindgen::prelude::*;
+use web_sys::{Document, Element};
 
 #[wasm_bindgen]
 pub fn run_stack(src: &str) -> Result {
     let mut executor = Executor::new();
     executor.evaluate_program(src.to_string());
     Result::new(executor.output, executor.log)
+}
+
+fn get_element_by_id(element_id: String) -> Type {
+    let window: web_sys::Window = web_sys::window().expect("no global `window` exists");
+    let document: Document = window.document().expect("should have a document on window");
+    
+    if let Some(element) = document.get_element_by_id(&element_id) {
+        Type::Element(element)
+    } else {
+        Type::Error("element-not-found".to_string())
+    }
 }
 
 #[wasm_bindgen]
@@ -45,6 +57,7 @@ enum Type {
     List(Vec<Type>),
     Object(String, HashMap<String, Type>),
     Error(String),
+    Element(Element),
 }
 
 /// Implement methods
@@ -60,9 +73,8 @@ impl Type {
                 format!("[{}]", result.join(" "))
             }
             Type::Error(err) => format!("error:{err}"),
-            Type::Object(name, _) => {
-                format!("Object<{name}>")
-            }
+            Type::Object(name, _) => format!("Object<{name}>"),
+            Type::Element(node) => node.to_string().into(),
         }
     }
 
@@ -74,9 +86,8 @@ impl Type {
             Type::Bool(b) => b.to_string(),
             Type::List(l) => Type::List(l.to_owned()).display(),
             Type::Error(err) => format!("error:{err}"),
-            Type::Object(name, _) => {
-                format!("Object<{name}>")
-            }
+            Type::Object(name, _) => format!("Object<{name}>"),
+            Type::Element(node) => node.to_string().into(),
         }
     }
 
@@ -95,6 +106,7 @@ impl Type {
             Type::List(l) => l.len() as f64,
             Type::Error(e) => e.parse().unwrap_or(0f64),
             Type::Object(_, object) => object.len() as f64,
+            Type::Element(_) => 0f64,
         }
     }
 
@@ -107,6 +119,7 @@ impl Type {
             Type::List(l) => !l.is_empty(),
             Type::Error(e) => e.parse().unwrap_or(false),
             Type::Object(_, object) => object.is_empty(),
+            Type::Element(_) => false,
         }
     }
 
@@ -123,6 +136,7 @@ impl Type {
             Type::List(l) => l.to_vec(),
             Type::Error(e) => vec![Type::Error(e.to_string())],
             Type::Object(_, object) => object.values().map(|x| x.to_owned()).collect::<Vec<Type>>(),
+            Type::Element(_) => vec![],
         }
     }
 
@@ -130,6 +144,13 @@ impl Type {
         match self {
             Type::Object(name, value) => (name.to_owned(), value.to_owned()),
             _ => ("".to_string(), HashMap::new()),
+        }
+    }
+
+    fn get_element(&self) -> Element {
+        match self {
+            Type::Element(i) => i.clone(),
+            _ => panic!("It's not element type")
         }
     }
 }
@@ -771,9 +792,9 @@ impl Executor {
                     Type::Bool(_) => "bool".to_string(),
                     Type::List(_) => "list".to_string(),
                     Type::Error(_) => "error".to_string(),
-                    Type::Object(name, _) => name
-                }
-                ;
+                    Type::Object(name, _) => name,
+                    Type::Element(_) => "element".to_string(),
+                };
                 self.stack.push(Type::String(result));
             }
 
@@ -830,103 +851,113 @@ impl Executor {
 
             // Commands of object oriented system
 
-        // Generate a instance of object
-        "instance" => {
-            let data = self.pop_stack().get_list();
-            let mut class = self.pop_stack().get_list();
-            let mut object: HashMap<String, Type> = HashMap::new();
+            // Generate a instance of object
+            "instance" => {
+                let data = self.pop_stack().get_list();
+                let mut class = self.pop_stack().get_list();
+                let mut object: HashMap<String, Type> = HashMap::new();
 
-            let name = if !class.is_empty() {
-                class[0].get_string()
-            } else {
-                self.log("Error! the type name is not found.".to_string());
-                self.stack.push(Type::Error("instance-name".to_string()));
-                return;
-            };
-
-            let mut index = 0;
-            for item in &mut class.to_owned()[1..class.len()].iter() {
-                let mut item = item.to_owned();
-                if item.get_list().len() == 1 {
-                    let element = match data.get(index) {
-                        Some(value) => value,
-                        None => {
-                            self.log("Error! initial data is shortage\n".to_string());
-                            self.stack
-                                .push(Type::Error("instance-shortage".to_string()));
-                            return;
-                        }
-                    };
-                    object.insert(
-                        item.get_list()[0].to_owned().get_string(),
-                        element.to_owned(),
-                    );
-                    index += 1;
-                } else if item.get_list().len() >= 2 {
-                    let item = item.get_list();
-                    object.insert(item[0].clone().get_string(), item[1].clone());
+                let name = if !class.is_empty() {
+                    class[0].get_string()
                 } else {
-                    self.log("Error! the class data structure is wrong.".to_string());
-                    self.stack.push(Type::Error("instance-default".to_string()));
+                    self.log("Error! the type name is not found.".to_string());
+                    self.stack.push(Type::Error("instance-name".to_string()));
+                    return;
+                };
+
+                let mut index = 0;
+                for item in &mut class.to_owned()[1..class.len()].iter() {
+                    let mut item = item.to_owned();
+                    if item.get_list().len() == 1 {
+                        let element = match data.get(index) {
+                            Some(value) => value,
+                            None => {
+                                self.log("Error! initial data is shortage\n".to_string());
+                                self.stack
+                                    .push(Type::Error("instance-shortage".to_string()));
+                                return;
+                            }
+                        };
+                        object.insert(
+                            item.get_list()[0].to_owned().get_string(),
+                            element.to_owned(),
+                        );
+                        index += 1;
+                    } else if item.get_list().len() >= 2 {
+                        let item = item.get_list();
+                        object.insert(item[0].clone().get_string(), item[1].clone());
+                    } else {
+                        self.log("Error! the class data structure is wrong.".to_string());
+                        self.stack.push(Type::Error("instance-default".to_string()));
+                    }
                 }
+
+                self.stack.push(Type::Object(name, object))
             }
 
-            self.stack.push(Type::Object(name, object))
-        }
+            // Get property of object
+            "property" => {
+                let name = self.pop_stack().get_string();
+                let (_, object) = self.pop_stack().get_object();
+                self.stack.push(
+                    object
+                        .get(name.as_str())
+                        .unwrap_or(&Type::Error("property".to_string()))
+                        .clone(),
+                )
+            }
 
-        // Get property of object
-        "property" => {
-            let name = self.pop_stack().get_string();
-            let (_, object) = self.pop_stack().get_object();
-            self.stack.push(
-                object
-                    .get(name.as_str())
-                    .unwrap_or(&Type::Error("property".to_string()))
-                    .clone(),
-            )
-        }
+            // Call the method of object
+            "method" => {
+                let method = self.pop_stack().get_string();
+                let (name, value) = self.pop_stack().get_object();
+                let data = Type::Object(name, value.clone());
+                self.memory
+                    .entry("self".to_string())
+                    .and_modify(|value| *value = data.clone())
+                    .or_insert(data);
 
-        // Call the method of object
-        "method" => {
-            let method = self.pop_stack().get_string();
-            let (name, value) = self.pop_stack().get_object();
-            let data = Type::Object(name, value.clone());
-            self.memory
-                .entry("self".to_string())
-                .and_modify(|value| *value = data.clone())
-                .or_insert(data);
+                let program: String = match value.get(&method) {
+                    Some(i) => i.to_owned().get_string().to_string(),
+                    None => "".to_string(),
+                };
 
-            let program: String = match value.get(&method) {
-                Some(i) => i.to_owned().get_string().to_string(),
-                None => "".to_string(),
-            };
+                self.evaluate_program(program);
+            }
 
-            self.evaluate_program(program);
-        }
-
-        // Modify the property of object
-        "modify" => {
-            let data = self.pop_stack();
-            let property = self.pop_stack().get_string();
-            let (name, mut value) = self.pop_stack().get_object();
-            value
-                .entry(property)
-                .and_modify(|value| *value = data.clone())
-                .or_insert(data.clone());
-
-            self.stack.push(Type::Object(name, value))
-        }
-
-        // Get all of properties
-        "all" => {
-            let (_, value) = self.pop_stack().get_object();
-            self.stack.push(Type::List(
+            // Modify the property of object
+            "modify" => {
+                let data = self.pop_stack();
+                let property = self.pop_stack().get_string();
+                let (name, mut value) = self.pop_stack().get_object();
                 value
-                    .keys()
-                    .map(|x| Type::String(x.to_owned()))
-                    .collect::<Vec<Type>>(),
-            ));
-        }
+                    .entry(property)
+                    .and_modify(|value| *value = data.clone())
+                    .or_insert(data.clone());
+
+                self.stack.push(Type::Object(name, value))
+            }
+
+            // Get all of properties
+            "all" => {
+                let (_, value) = self.pop_stack().get_object();
+                self.stack.push(Type::List(
+                    value
+                        .keys()
+                        .map(|x| Type::String(x.to_owned()))
+                        .collect::<Vec<Type>>(),
+                ));
+            }
+
+            "get-element-by-id" => {
+                let id = self.pop_stack().get_string();
+                self.stack.push(get_element_by_id(id));
+            }
+
+            "set-inner-html" => {
+                let element = self.pop_stack().get_element();
+                element.set_inner_html(&self.pop_stack().get_string())
+            }
 
             // If it is not recognized as a command, use it as a string.
             _ => self.stack.push(Type::String(command)),
