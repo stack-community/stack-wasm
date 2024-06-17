@@ -11,7 +11,7 @@ pub fn run_stack(src: &str) -> Result {
 fn get_element_by_id(element_id: String) -> Type {
     let window: web_sys::Window = web_sys::window().expect("no global `window` exists");
     let document: Document = window.document().expect("should have a document on window");
-    
+
     if let Some(element) = document.get_element_by_id(&element_id) {
         Type::Element(element)
     } else {
@@ -957,6 +957,11 @@ impl Executor {
             "set-inner-html" => {
                 let element = self.pop_stack().get_element();
                 element.set_inner_html(&self.pop_stack().get_string())
+            }
+
+            "get-inner-html" => {
+                let element = self.pop_stack().get_element();
+                self.stack.push(Type::String(element.inner_html()));
             }
 
             // If it is not recognized as a command, use it as a string.
