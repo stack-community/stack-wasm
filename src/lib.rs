@@ -964,6 +964,16 @@ impl Executor {
                 self.stack.push(Type::String(element.inner_html()));
             }
 
+            "get-id" => {
+                let element = self.pop_stack().get_element();
+                self.stack.push(Type::String(element.id()));
+            }
+
+            "set-id" => {
+                let element = self.pop_stack().get_element();
+                element.set_id(&self.pop_stack().get_string());
+            }
+
             // If it is not recognized as a command, use it as a string.
             _ => self.stack.push(Type::String(command)),
         }
