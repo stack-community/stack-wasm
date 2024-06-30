@@ -974,6 +974,19 @@ impl Executor {
                 element.set_id(&self.pop_stack().get_string());
             }
 
+            "create-element" => {
+                let name = self.pop_stack().get_string();
+                let window = web_sys::window().expect("no global `window` exists");
+                let document = window.document().expect("should have a document on window");
+ 
+                self.stack.push(Type::Element(document.create_element(&name).unwrap()));
+            }
+
+            "append-child" => {
+                let element = self.pop_stack().get_element();
+                element.append_child(&self.pop_stack().get_element()).expect("チノちゃん「うるさいですね...」");
+            }
+
             // If it is not recognized as a command, use it as a string.
             _ => self.stack.push(Type::String(command)),
         }
