@@ -1,4 +1,5 @@
 use wasm_bindgen::prelude::*;
+use web_sys::js_sys::Function;
 use web_sys::{Document, Element};
 
 #[wasm_bindgen]
@@ -150,7 +151,7 @@ impl Type {
     fn get_element(&self) -> Element {
         match self {
             Type::Element(i) => i.clone(),
-            _ => panic!("It's not element type")
+            _ => panic!("It's not element type"),
         }
     }
 }
@@ -978,13 +979,29 @@ impl Executor {
                 let name = self.pop_stack().get_string();
                 let window = web_sys::window().expect("no global `window` exists");
                 let document = window.document().expect("should have a document on window");
- 
-                self.stack.push(Type::Element(document.create_element(&name).unwrap()));
+
+                self.stack
+                    .push(Type::Element(document.create_element(&name).unwrap()));
             }
 
             "append-child" => {
                 let element = self.pop_stack().get_element();
-                element.append_child(&self.pop_stack().get_element()).expect("チノちゃん「うるさいですね...」");
+                element
+                    .append_child(&self.pop_stack().get_element())
+                    .expect("チノちゃん「うるさいですね...」");
+            }
+
+            "add-event-listener" => {
+                let element = self.pop_stack().get_element();
+                element
+                    .add_event_listener_with_callback(
+                        &self.pop_stack().get_string(),
+                        &Function::new_no_args(&format!(
+                            "window.run_stack(`{}`)",
+                            self.pop_stack().get_string()
+                        )),
+                    )
+                    .expect("チノちゃん「うるさいですね...」");
             }
 
             // If it is not recognized as a command, use it as a string.
