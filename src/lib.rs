@@ -991,6 +991,13 @@ impl Executor {
                     .expect("チノちゃん「うるさいですね...」");
             }
 
+            "remove-child" => {
+                let element = self.pop_stack().get_element();
+                element
+                    .remove_child(&self.pop_stack().get_element())
+                    .expect("美大落ちチョビ髭「チクショーメー！」");
+            }
+
             "add-event-listener" => {
                 let element = self.pop_stack().get_element();
                 element
