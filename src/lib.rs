@@ -1011,6 +1011,16 @@ impl Executor {
                     .expect("チノちゃん「うるさいですね...」");
             }
 
+            "active-element" => {
+                let window = web_sys::window().expect("no global `window` exists");
+                let document = window.document().expect("should have a document on window");
+                if let Some(i) = document.active_element() {
+                    self.stack.push(Type::Element(i));
+                } else {
+                    self.stack.push(Type::Error("active-element".to_string()));
+                }
+            }
+
             // If it is not recognized as a command, use it as a string.
             _ => self.stack.push(Type::String(command)),
         }
