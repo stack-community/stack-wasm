@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use web_sys::js_sys::Function;
-use web_sys::{Document, Element};
+use web_sys::{Document, Element, HtmlInputElement};
 
 #[wasm_bindgen]
 pub fn run_stack(src: &str) -> Result {
@@ -1019,6 +1019,25 @@ impl Executor {
                 } else {
                     self.stack.push(Type::Error("active-element".to_string()));
                 }
+            }
+
+            "get-value-input" => {
+                let element = self
+                    .pop_stack()
+                    .get_element()
+                    .dyn_into::<HtmlInputElement>()
+                    .unwrap();
+                self.stack.push(Type::String(element.value().to_string()));
+            }
+
+            "set-value-input" => {
+                let element = self
+                    .pop_stack()
+                    .get_element()
+                    .dyn_into::<HtmlInputElement>()
+                    .unwrap();
+                let value = self.pop_stack().get_string();
+                element.set_value(&value);
             }
 
             // If it is not recognized as a command, use it as a string.
