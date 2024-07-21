@@ -1056,6 +1056,12 @@ impl Executor {
                 }
             }
 
+            "get-style" => {
+                let name = &self.pop_stack().get_string();
+                let element: HtmlElement = self.pop_stack().get_element().dyn_into::<HtmlElement>().expect("You'are an idiot!");
+                self.stack.push(Type::String(element.style().get_property_value(name).expect("チノちゃん「うるさいですね...」")));
+            }
+
             "set-style" => {
                 let value = &self.pop_stack().get_string();
                 let name = &self.pop_stack().get_string();
