@@ -981,6 +981,25 @@ impl Executor {
                 element.set_id(&self.pop_stack().get_string());
             }
 
+            "get-attribute" => {
+                let name = self.pop_stack().get_string();
+                let element = self.pop_stack().get_element();
+                self.stack.push(Type::String(
+                    element
+                        .get_attribute(&name)
+                        .expect("チノちゃん「うるさいですね...」"),
+                ));
+            }
+
+            "set-attribute" => {
+                let value = self.pop_stack().get_string();
+                let name = self.pop_stack().get_string();
+                let element = self.pop_stack().get_element();
+                element
+                    .set_attribute(&name, &value)
+                    .expect("チノちゃん「うるさいですね...」");
+            }
+
             "create-element" => {
                 let name = self.pop_stack().get_string();
                 let window = web_sys::window().expect("no global `window` exists");
@@ -1058,15 +1077,31 @@ impl Executor {
 
             "get-style" => {
                 let name = &self.pop_stack().get_string();
-                let element: HtmlElement = self.pop_stack().get_element().dyn_into::<HtmlElement>().expect("You'are an idiot!");
-                self.stack.push(Type::String(element.style().get_property_value(name).expect("チノちゃん「うるさいですね...」")));
+                let element: HtmlElement = self
+                    .pop_stack()
+                    .get_element()
+                    .dyn_into::<HtmlElement>()
+                    .expect("You'are an idiot!");
+                self.stack.push(Type::String(
+                    element
+                        .style()
+                        .get_property_value(name)
+                        .expect("チノちゃん「うるさいですね...」"),
+                ));
             }
 
             "set-style" => {
                 let value = &self.pop_stack().get_string();
                 let name = &self.pop_stack().get_string();
-                let element: HtmlElement = self.pop_stack().get_element().dyn_into::<HtmlElement>().expect("You'are an idiot!");
-                element.style().set_property(name, value).expect("チノちゃん「うるさいですね...」");
+                let element: HtmlElement = self
+                    .pop_stack()
+                    .get_element()
+                    .dyn_into::<HtmlElement>()
+                    .expect("You'are an idiot!");
+                element
+                    .style()
+                    .set_property(name, value)
+                    .expect("チノちゃん「うるさいですね...」");
             }
 
             // If it is not recognized as a command, use it as a string.
