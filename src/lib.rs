@@ -1,12 +1,7 @@
 use wasm_bindgen::prelude::*;
 use web_sys::js_sys::Function;
 use web_sys::{Document, Element, HtmlElement, HtmlInputElement};
-
-// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-// allocator.
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+use wasm_bindgen::JsCast;
 
 #[wasm_bindgen]
 pub fn run_stack(src: &str) -> Result {
@@ -1102,6 +1097,17 @@ impl Executor {
                     .style()
                     .set_property(name, value)
                     .expect("チノちゃん「うるさいですね...」");
+            }
+
+            "get-url" => {
+                // Access the window object
+                let window = web_sys::window().expect("no global `window` exists");
+                
+                // Access the current URL
+                let location = window.location();
+                
+                // Get the full URL as a string
+               self.stack.push(Type::String(location.href().expect("should have href")))
             }
 
             // If it is not recognized as a command, use it as a string.

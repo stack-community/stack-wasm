@@ -14,5 +14,6 @@ web-sys = { version = "0.3.69", features = [
     "HtmlElement",
     "HtmlInputElement",
     "CssStyleDeclaration",
+    "Location"
 ] }
 js-sys = "0.3"
