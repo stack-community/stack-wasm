@@ -1,6 +1,12 @@
 use wasm_bindgen::prelude::*;
 use web_sys::js_sys::Function;
-use web_sys::{Document, Element, HtmlInputElement};
+use web_sys::{Document, Element, HtmlElement, HtmlInputElement};
+
+// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
+// allocator.
+#[cfg(feature = "wee_alloc")]
+#[global_allocator]
+static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
 pub fn run_stack(src: &str) -> Result {
@@ -1048,6 +1054,13 @@ impl Executor {
                 } else {
                     self.stack.push(Type::Error("query-selector".to_string()));
                 }
+            }
+
+            "set-style" => {
+                let value = &self.pop_stack().get_string();
+                let name = &self.pop_stack().get_string();
+                let element: HtmlElement = self.pop_stack().get_element().dyn_into::<HtmlElement>().expect("You'are an idiot!");
+                element.style().set_property(name, value).expect("チノちゃん「うるさいですね...」");
             }
 
             // If it is not recognized as a command, use it as a string.
